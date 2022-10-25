@@ -1,0 +1,96 @@
+admin:
+  address:
+    socket_address: { address: 0.0.0.0, port_value: 9901 }
+
+static_resources:
+  listeners:
+  - name: listener_0
+    address:
+      socket_address: { address: 0.0.0.0, port_value: 10000 }
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_http
+          codec_type: AUTO
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: local_service
+              domains: ["*"]
+              routes:
+              - match: { prefix: "/" }
+                route: { cluster: app }
+          http_filters:
+          - name: envoy.filters.http.jwt
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+            
+              rules:
+              - match:
+                  prefix: /docs
+
+              - match:
+                  prefix: /openapi.json
+
+              - match:
+                  prefix: /
+                requires:
+                  provider_name: dias
+
+              providers:
+                dias:
+                  issuer: https://keyclaok_address/auth/realms/dias
+                  audiences:
+                  - account
+
+                  remote_jwks:
+                    http_uri:
+                      uri: https://keyclaok_address/auth/realms/dias/protocol/openid-connect/certs
+                      cluster: dias
+                      timeout: 1s
+                    cache_duration:
+                      seconds: 300
+                    retry_policy:
+                      retry_back_off:
+                        base_interval: 0.01s
+                        max_interval: 20s
+                      num_retries: 10
+
+
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  clusters:
+  - name: app
+    connect_timeout: 0.25s
+    type: logical_dns
+    lb_policy: round_robin
+    load_assignment:
+      cluster_name: app
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: app
+                port_value: 8080
+  - name: dias
+    connect_timeout: 0.25s
+    type: logical_dns
+    lb_policy: round_robin
+    load_assignment:
+      cluster_name: dias
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: keyclaok_address
+                port_value: 443
+
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
